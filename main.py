@@ -257,8 +257,7 @@ https://www.scdu.hr/student_poslovi
 
 
 def main():
-    send_telegram_message("✅ GitHub Actions test: secrets rade!")
-    return
+
     seen_jobs = load_seen_jobs()
 
     jobs = fetch_jobs()
