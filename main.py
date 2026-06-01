@@ -1,6 +1,15 @@
+from email.mime import message
+import json
+import os
 import re
+import hashlib
 import requests
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
+
+load_dotenv()
+
+SEEN_JOBS_FILE = "seen_jobs.json"
 
 URL = "https://www.scdu.hr/student_poslovi"
 
@@ -121,7 +130,9 @@ def is_good_job(job):
     bad_keywords = [
         "skladište",
         "pretovar",
-        "selidbe",
+        "konobar",
+        "zračna luka",
+        "Čilipi",
         "teški fizički",
         "fizički",
     ]
@@ -155,18 +166,119 @@ def print_job(job, index):
     print("-" * 60)
 
 
+def create_job_id(job):
+    """
+    Stvara jedinstveni ID za oglas na temelju njegovih podataka.
+    """
+    unique_text = f"{job['company']}|{job['job_type']}|{job['published']}|{job['location']}|{job['hourly_rate_text']}"
+
+    return hashlib.md5(unique_text.encode("utf-8")).hexdigest()
+
+
+def load_seen_jobs():
+    """
+    Učitava ID-jeve već viđenih oglasa iz seen_jobs.json.
+    Ako file ne postoji, vraća prazan set.
+    """
+    if not os.path.exists(SEEN_JOBS_FILE):
+        return set()
+
+    with open(SEEN_JOBS_FILE, "r", encoding="utf-8") as file:
+        data = json.load(file)
+
+    return set(data)
+
+
+def save_seen_jobs(seen_jobs):
+    """
+    Sprema ID-jeve viđenih oglasa u seen_jobs.json.
+    """
+    with open(SEEN_JOBS_FILE, "w", encoding="utf-8") as file:
+        json.dump(list(seen_jobs), file, ensure_ascii=False, indent=2)
+
+
+def get_new_jobs(jobs, seen_jobs):
+    """
+    Vraća samo oglase koje još nismo vidjeli.
+    """
+    new_jobs = []
+
+    for job in jobs:
+        job_id = create_job_id(job)
+        job["id"] = job_id
+
+        if job_id not in seen_jobs:
+            new_jobs.append(job)
+
+    return new_jobs
+
+
+def send_telegram_message(message):
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+
+    if not token or not chat_id:
+        print("Telegram token ili chat ID nisu postavljeni u .env fileu.")
+        return
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+
+    response = requests.post(
+        url,
+        data={
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "HTML"
+        },
+        timeout=10
+    )
+
+    response.raise_for_status()
+
+
+def format_job_message(job):
+    return f"""
+🟢 <b>Novi dobar studentski posao</b>
+
+<b>Firma:</b> {job['company']}
+<b>Lokacija:</b> {job['location']}
+<b>Vrsta posla:</b> {job['job_type']}
+<b>Opis:</b> {job['description']}
+<b>Satnica:</b> {job['hourly_rate_text']}
+<b>Radno vrijeme:</b> {job['work_time']}
+<b>Period rada:</b> {job['work_period']}
+
+<b>Email:</b> {job['email']}
+<b>Kontakt osoba:</b> {job['contact_person']}
+<b>Kontakt broj:</b> {job['contact_number']}
+
+https://www.scdu.hr/student_poslovi
+""".strip()
+
+
 def main():
+    seen_jobs = load_seen_jobs()
+
     jobs = fetch_jobs()
+    new_jobs = get_new_jobs(jobs, seen_jobs)
+
+    good_new_jobs = [job for job in new_jobs if is_good_job(job)]
 
     print(f"Ukupno pronađeno oglasa: {len(jobs)}")
-
-    good_jobs = [job for job in jobs if is_good_job(job)]
-
-    print(f"Dobrih oglasa nakon filtera: {len(good_jobs)}")
+    print(f"Novih oglasa: {len(new_jobs)}")
+    print(f"Dobrih novih oglasa nakon filtera: {len(good_new_jobs)}")
     print("=" * 60)
 
-    for index, job in enumerate(good_jobs, start=1):
+    for index, job in enumerate(good_new_jobs, start=1):
         print_job(job, index)
+
+        message = format_job_message(job)
+        send_telegram_message(message)
+
+    for job in new_jobs:
+        seen_jobs.add(job["id"])
+
+    save_seen_jobs(seen_jobs)
 
 
 if __name__ == "__main__":
