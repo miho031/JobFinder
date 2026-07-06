@@ -326,8 +326,8 @@ def main():
     jobs = fetch_jobs()
     new_jobs = get_new_jobs(jobs, seen_jobs)
 
-    # good_new_jobs = [job for job in new_jobs if is_good_job(job)]
-    good_new_jobs = new_jobs
+    good_new_jobs = [job for job in new_jobs if is_good_job(job)]
+    # good_new_jobs = new_jobs
     print(f"Ukupno pronađeno oglasa: {len(jobs)}")
     print(f"Novih oglasa: {len(new_jobs)}")
     print(f"Dobrih novih oglasa nakon filtera: {len(good_new_jobs)}")
