@@ -63,31 +63,89 @@ def extract_hourly_rate(rate_text):
     return float(match.group(1).replace(",", "."))
 
 
-def parse_job(job_element):
-    """
-    Prima jedan HTML element oglasa i pretvara ga u Python dictionary.
-    """
-    text = job_element.get_text("\n", strip=True)
-    lines = text.split("\n")
+def normalize_label(text):
+    return text.lower().replace(":", "").strip()
 
-    company = lines[0] if lines else None
-    rate_text = get_value_after_label(lines, "Cijena sata:")
+
+def get_value(lines, possible_labels):
+    """
+    Traži vrijednost za labelu.
+    Radi za oba slučaja:
+    - Cijena sata: 8 €
+    - Mjesto obavljanja posla
+      Dubrovnik
+    """
+    normalized_labels = [normalize_label(label) for label in possible_labels]
+
+    for index, line in enumerate(lines):
+        clean_line = line.strip()
+        normalized_line = normalize_label(clean_line)
+
+        # slučaj: "Cijena sata: 8 €"
+        for label in possible_labels:
+            if clean_line.lower().startswith(label.lower()):
+                value = clean_line[len(label):].replace(":", "").strip()
+                if value:
+                    return value
+
+        # slučaj:
+        # "Mjesto obavljanja posla"
+        # "Dubrovnik"
+        if normalized_line in normalized_labels:
+            if index + 1 < len(lines):
+                return lines[index + 1].strip()
+
+    return None
+
+
+def split_jobs_from_page_text(text):
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+
+    jobs_blocks = []
+    current_job = []
+
+    for index, line in enumerate(lines):
+        next_line = lines[index + 1] if index + 1 < len(lines) else ""
+
+        # Novi oglas najčešće počinje naslovom posla,
+        # a odmah nakon njega dolazi "Cijena sata"
+        is_new_job_title = next_line.startswith("Cijena sata")
+
+        if is_new_job_title:
+            if current_job:
+                jobs_blocks.append(current_job)
+
+            current_job = [line]
+        else:
+            if current_job:
+                current_job.append(line)
+
+    if current_job:
+        jobs_blocks.append(current_job)
+
+    return jobs_blocks
+
+
+def parse_job_from_lines(lines):
+    title = lines[0] if lines else None
+
+    rate_text = get_value(lines, ["Cijena sata"])
 
     job = {
-        "company": company,
-        "published": get_value_same_line(lines, "Objavljeno:"),
-        "expires": get_value_same_line(lines, "Oglas isteće:"),
-        "location": get_value_after_label(lines, "Mjesto obavljanja posla:"),
-        "job_type": get_value_after_label(lines, "Vrsta posla:"),
-        "description": get_value_after_label(lines, "Opis posla:"),
-        "work_period": get_value_after_label(lines, "Period rada:"),
-        "work_time": get_value_after_label(lines, "Radno vrijeme:"),
+        "company": get_value(lines, ["Poslodavac"]),
+        "published": get_value(lines, ["Objavljeno"]),
+        "expires": get_value(lines, ["Oglas istječe", "Oglas isteće"]),
+        "location": get_value(lines, ["Mjesto obavljanja posla"]),
+        "job_type": title,
+        "description": get_value(lines, ["Opis posla"]),
+        "work_period": get_value(lines, ["Period rada"]),
+        "work_time": get_value(lines, ["Radno vrijeme"]),
         "hourly_rate_text": rate_text,
         "hourly_rate": extract_hourly_rate(rate_text),
-        "email": get_value_after_label(lines, "Email:"),
-        "contact_person": get_value_after_label(lines, "Kontakt osoba:"),
-        "contact_number": get_value_after_label(lines, "Kontakt broj:"),
-        "raw_text": text,
+        "email": get_value(lines, ["Email"]),
+        "contact_person": get_value(lines, ["Kontakt osoba"]),
+        "contact_number": get_value(lines, ["Kontakt broj"]),
+        "raw_text": "\n".join(lines),
     }
 
     return job
@@ -95,20 +153,25 @@ def parse_job(job_element):
 
 def fetch_jobs():
     """
-    Dohvaća stranicu Student servisa i vraća listu oglasa.
+    Nova verzija za promijenjenu SCDU stranicu.
     """
     response = requests.get(URL, headers=HEADERS, timeout=10)
     response.raise_for_status()
 
     soup = BeautifulSoup(response.text, "html.parser")
 
-    job_elements = soup.select(".div_dostupni_poslovi")
+    text = soup.get_text("\n", strip=True)
+
+    job_blocks = split_jobs_from_page_text(text)
 
     jobs = []
 
-    for element in job_elements:
-        job = parse_job(element)
-        jobs.append(job)
+    for block in job_blocks:
+        job = parse_job_from_lines(block)
+
+        # sigurnosna provjera da ne ubaci footer ili krivi dio stranice
+        if job["job_type"] and job["hourly_rate_text"]:
+            jobs.append(job)
 
     return jobs
 
@@ -263,8 +326,8 @@ def main():
     jobs = fetch_jobs()
     new_jobs = get_new_jobs(jobs, seen_jobs)
 
-    good_new_jobs = [job for job in new_jobs if is_good_job(job)]
-
+    # good_new_jobs = [job for job in new_jobs if is_good_job(job)]
+    good_new_jobs = new_jobs
     print(f"Ukupno pronađeno oglasa: {len(jobs)}")
     print(f"Novih oglasa: {len(new_jobs)}")
     print(f"Dobrih novih oglasa nakon filtera: {len(good_new_jobs)}")
