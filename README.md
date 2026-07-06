@@ -9,3 +9,4 @@ A Python automation bot that monitors student job listings from the Dubrovnik St
 - Filters jobs by hourly rate and keywords
 - Sends Telegram notifications
 - Runs automatically with GitHub Actions
+- Supports Telegram group notifications for multiple users.
